@@ -1,112 +1,153 @@
 import customtkinter as ctk
-from PIL import Image, ImageTk
+from PIL import Image
+from bleak import BleakScanner
+import asyncio
+import threading
 
-ctk.set_appearance_mode("dark")
+# ================= CONFIGURACIÓN BASE =================
+ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
-app = ctk.CTk()
-app.title("Interfaz BLE - Arduino HM-10")
-app.geometry("1000x650")
+root = ctk.CTk()
+root.title("Control Bluetooth Arduino")
+root.geometry("1100x600")
 
-# --- FRAME CONEXIÓN ---
-frame_conexion = ctk.CTkFrame(app, corner_radius=15)
-frame_conexion.pack(fill="x", padx=20, pady=10)
-
-label_titulo = ctk.CTkLabel(frame_conexion, text="INTERFAZ DE CONEXIÓN BLUETOOTH BLE", font=("Arial", 20, "bold"))
-label_titulo.pack(pady=10)
-
-boton_buscar = ctk.CTkButton(frame_conexion, text="🔍 Buscar Dispositivos", width=200)
-boton_buscar.pack(side="left", padx=20, pady=10)
-
-boton_conectar = ctk.CTkButton(frame_conexion, text="🔗 Conectar", width=200)
-boton_conectar.pack(side="left", padx=20, pady=10)
-
-label_estado = ctk.CTkLabel(frame_conexion, text="Estado: Desconectado", font=("Arial", 14))
-label_estado.pack(side="right", padx=20)
-
-# --- FRAME MOVIMIENTOS ---
-frame_mov = ctk.CTkFrame(app, corner_radius=15)
-frame_mov.pack(padx=20, pady=10, fill="both", expand=True)
-
-label_mov = ctk.CTkLabel(frame_mov, text="CONTROLES DE MOVIMIENTO", font=("Arial", 18, "bold"))
-label_mov.pack(pady=10)
-
-# --- Cargar imágenes ---
+# ================= FUNCIONES =================
 def cargar_img(nombre, size=(80, 80)):
-    return ctk.CTkImage(light_image=Image.open(f"imagenes/{nombre}"), size=size)
+    try:
+        return ctk.CTkImage(Image.open(f"imagenes/{nombre}"), size=size)
+    except Exception as e:
+        print(f"Error al cargar {nombre}: {e}")
+        return None
 
+def agregar_accion(nombre):
+    acciones_listbox.insert("end", f"{len(secuencia_visual)+1}. {nombre}\n")
+    if nombre in imagenes:
+        cont = ctk.CTkFrame(frame_centro, corner_radius=10)
+        cont.pack(pady=5, fill="x", padx=15)
+
+        lbl_img = ctk.CTkLabel(cont, image=imagenes[nombre], text="")
+        lbl_img.pack(side="left", padx=10, pady=5)
+
+        lbl_text = ctk.CTkLabel(cont, text=nombre, font=("Arial", 15, "bold"))
+        lbl_text.pack(side="left", padx=10)
+        secuencia_visual.append(cont)
+
+def limpiar_secuencia():
+    for lbl in secuencia_visual:
+        lbl.destroy()
+    secuencia_visual.clear()
+    acciones_listbox.delete("1.0", "end")
+
+def seleccionar_dispositivo(nombre):
+    global dispositivo_seleccionado
+    dispositivo_seleccionado = nombre
+    lbl_estado.configure(text=f"Seleccionado: {nombre}", text_color="blue")
+
+async def buscar_dispositivos_ble():
+    dispositivos = await BleakScanner.discover()
+    for d in dispositivos:
+        nombre = d.name or "Desconocido"
+        btn = ctk.CTkButton(frame_lista_bt, text=f"{nombre} ({d.address})",
+                            command=lambda n=nombre: seleccionar_dispositivo(n))
+        btn.pack(pady=3, fill="x", padx=5)
+
+def escanear_ble():
+    for widget in frame_lista_bt.winfo_children():
+        widget.destroy()
+    threading.Thread(target=lambda: asyncio.run(buscar_dispositivos_ble())).start()
+
+def toggle_bluetooth_panel():
+    global panel_bt_visible
+    if panel_bt_visible:
+        frame_der.pack_forget()
+        panel_bt_visible = False
+    else:
+        frame_der.pack(side="right", fill="y", padx=5, pady=10)
+        panel_bt_visible = True
+
+def conectar_bluetooth():
+    if dispositivo_seleccionado:
+        lbl_estado.configure(text=f"Conectado a {dispositivo_seleccionado}", text_color="green")
+
+def desconectar_bluetooth():
+    lbl_estado.configure(text="No hay dispositivo conectado", text_color="red")
+
+# ================= IMÁGENES =================
 imagenes = {
-    "adelante": cargar_img("adelante.jpg"),
-    "izquierda": cargar_img("izquierda.png"),
-    "derecha": cargar_img("derecha.png"),
-    "detener": cargar_img("detener.jpg"),
-    "reversa": cargar_img("reversa.jpg"),
-    "esperar": cargar_img("esperar.jpg"),
-    "encender": cargar_img("encender.jpg"),
+    "Adelante": cargar_img("adelante.jpg"),
+    "Izquierda": cargar_img("izquierda.png"),
+    "Derecha": cargar_img("derecha.png"),
+    "Reversa": cargar_img("reversa.jpg"),
+    "Detener": cargar_img("detener.jpg"),
+    "Esperar": cargar_img("esperar.jpg"),
+    "Encender": cargar_img("encender.jpg"),
 }
 
+icono_bt = cargar_img("bluetooth.png", size=(35, 35))
 
-# --- FRAME BOTONES DE CONTROL ---
-frame_botones = ctk.CTkFrame(frame_mov, fg_color="transparent")
-frame_botones.pack(pady=10)
+# ================= INTERFAZ =================
+frame_izq = ctk.CTkFrame(root, width=250)
+frame_izq.pack(side="left", fill="y", padx=10, pady=10)
 
-acciones = []
+frame_centro = ctk.CTkScrollableFrame(root, width=500)
+frame_centro.pack(side="left", fill="both", expand=True, pady=10)
 
-# Función para agregar acción con imagen
-def agregar_accion(nombre):
-    acciones.append(nombre)
-    actualizar_lista()
+frame_der = ctk.CTkFrame(root, width=250)  # más estrecho
 
-def actualizar_lista():
-    for widget in frame_lista_acciones.winfo_children():
-        widget.destroy()
+# --- PANEL IZQUIERDO ---
+lbl_acciones = ctk.CTkLabel(frame_izq, text="Comandos", font=("Arial", 17, "bold"))
+lbl_acciones.pack(pady=10)
 
-    for i, accion in enumerate(acciones):
-        ctk.CTkLabel(frame_lista_acciones, image=imagenes[accion], text=accion.capitalize(), compound="top").grid(row=0, column=i, padx=5)
+for acc in imagenes.keys():
+    ctk.CTkButton(frame_izq, text=acc, command=lambda a=acc: agregar_accion(a)).pack(pady=5, padx=10, fill="x")
 
-# Fila superior
-ctk.CTkButton(frame_botones, image=imagenes["adelante"], text="Adelante", compound="top", width=120, height=120,
-              command=lambda: agregar_accion("adelante")).grid(row=0, column=1, padx=10, pady=10)
+ctk.CTkLabel(frame_izq, text="Secuencia actual:", font=("Arial", 14)).pack(pady=(15, 5))
+acciones_listbox = ctk.CTkTextbox(frame_izq, height=120)
+acciones_listbox.pack(padx=10, pady=5, fill="x")
 
-# Fila central
-ctk.CTkButton(frame_botones, image=imagenes["izquierda"], text="Izquierda", compound="top", width=120, height=120,
-              command=lambda: agregar_accion("izquierda")).grid(row=1, column=0, padx=10, pady=10)
+# --- BOTONES UNO DEBAJO DEL OTRO ---
+btn_ejecutar = ctk.CTkButton(frame_izq, text="Ejecutar Secuencia", fg_color="green")
+btn_ejecutar.pack(pady=(10, 5), padx=10, fill="x")
 
-ctk.CTkButton(frame_botones, image=imagenes["detener"], text="Detener", compound="top", width=120, height=120,
-              command=lambda: agregar_accion("detener")).grid(row=1, column=1, padx=10, pady=10)
+btn_parar = ctk.CTkButton(frame_izq, text="Parar Secuencia", fg_color="orange")
+btn_parar.pack(pady=5, padx=10, fill="x")
 
-ctk.CTkButton(frame_botones, image=imagenes["derecha"], text="Derecha", compound="top", width=120, height=120,
-              command=lambda: agregar_accion("derecha")).grid(row=1, column=2, padx=10, pady=10)
+btn_limpiar = ctk.CTkButton(frame_izq, text="Limpiar Secuencia", command=limpiar_secuencia, fg_color="gray")
+btn_limpiar.pack(pady=5, padx=10, fill="x")
 
-# Fila inferior
-ctk.CTkButton(frame_botones, image=imagenes["reversa"], text="Reversa", compound="top", width=120, height=120,
-              command=lambda: agregar_accion("reversa")).grid(row=2, column=0, padx=10, pady=10)
+# --- PANEL CENTRAL ---
+ctk.CTkLabel(frame_centro, text="Vista de Secuencia", font=("Arial", 17, "bold")).pack(pady=10)
+secuencia_visual = []
 
-ctk.CTkButton(frame_botones, image=imagenes["esperar"], text="Esperar", compound="top", width=120, height=120,
-              command=lambda: agregar_accion("esperar")).grid(row=2, column=1, padx=10, pady=10)
+# --- BOTÓN BLUETOOTH (esquina superior derecha) ---
+btn_bt_icon = ctk.CTkButton(root, image=icono_bt, text="", width=45, height=40, command=toggle_bluetooth_panel)
+btn_bt_icon.place(relx=0.975, rely=0.02, anchor="ne")
 
-ctk.CTkButton(frame_botones, image=imagenes["encender"], text="Encender Motor", compound="top", width=120, height=120,
-              command=lambda: agregar_accion("encender")).grid(row=2, column=2, padx=10, pady=10)
+# --- PANEL DERECHO (Bluetooth) ---
+lbl_bt = ctk.CTkLabel(frame_der, text="Conexión Bluetooth", font=("Arial", 17, "bold"))
+lbl_bt.pack(pady=10)
 
-# --- FRAME LISTA DE ACCIONES ---
-frame_lista = ctk.CTkFrame(app, corner_radius=15)
-frame_lista.pack(fill="x", padx=20, pady=10)
+frame_lista_bt = ctk.CTkScrollableFrame(frame_der, height=250)
+frame_lista_bt.pack(padx=10, pady=5, fill="both")
 
-label_lista = ctk.CTkLabel(frame_lista, text="SECUENCIA A EJECUTAR", font=("Arial", 16, "bold"))
-label_lista.pack(anchor="w", padx=10, pady=5)
+btn_buscar = ctk.CTkButton(frame_der, text="Buscar Dispositivos", command=escanear_ble)
+btn_buscar.pack(pady=5, padx=10, fill="x")
 
-frame_lista_acciones = ctk.CTkFrame(frame_lista, fg_color="transparent")
-frame_lista_acciones.pack(fill="x", padx=10, pady=5)
+lbl_estado = ctk.CTkLabel(frame_der, text="No hay dispositivo conectado", text_color="red")
+lbl_estado.pack(pady=10)
 
-# --- FRAME INFERIOR ---
-frame_acciones = ctk.CTkFrame(app, corner_radius=15)
-frame_acciones.pack(fill="x", padx=20, pady=10)
+frame_conexion = ctk.CTkFrame(frame_der)
+frame_conexion.pack(pady=5)
 
-def limpiar_acciones():
-    acciones.clear()
-    actualizar_lista()
+btn_conectar = ctk.CTkButton(frame_conexion, text="Conectar", fg_color="green", command=conectar_bluetooth)
+btn_conectar.grid(row=0, column=0, padx=5)
 
-ctk.CTkButton(frame_acciones, text="▶ Ejecutar Secuencia", width=180).pack(side="left", padx=20, pady=10)
-ctk.CTkButton(frame_acciones, text="🗑 Limpiar", width=180, command=limpiar_acciones).pack(side="left", padx=20, pady=10)
+btn_desconectar = ctk.CTkButton(frame_conexion, text="Desconectar", fg_color="red", command=desconectar_bluetooth)
+btn_desconectar.grid(row=0, column=1, padx=5)
 
-app.mainloop()
+# ================= RUN =================
+panel_bt_visible = False
+dispositivo_seleccionado = None
+
+root.mainloop()
