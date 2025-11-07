@@ -1,6 +1,6 @@
 import customtkinter as ctk
 from PIL import Image, ImageTk
-import os, threading, time, serial, serial.tools.list_ports, tkinter as tk
+import os, serial, serial.tools.list_ports, tkinter as tk
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -181,7 +181,7 @@ class DragDropApp(ctk.CTk):
         fr_btn = ctk.CTkFrame(frame, fg_color="transparent")
         fr_btn.pack(pady=5)
         run = ctk.CTkButton(fr_btn, text="▶ Ejecutar", fg_color="#38b000", hover_color="#2d8700",
-                            command=lambda c=inner_container: threading.Thread(target=self._run_container, args=(c,), daemon=True).start())
+                            command=lambda c=inner_container: self._run_container(c))
         run.pack(side="left", padx=4)
         clear = ctk.CTkButton(fr_btn, text="🧹 Limpiar", fg_color="#6c757d", hover_color="#495057",
                               command=lambda c=inner_container: self._clear_container(c))
@@ -189,7 +189,23 @@ class DragDropApp(ctk.CTk):
 
         id_container = self.seq_area.create_window(x, y, window=frame, anchor="center")
         self.containers.append({"id": id_container, "frame": frame, "inner": inner_container, "blocks": []})
+        self._make_container_draggable(self.containers[-1])
 
+    def _make_container_draggable(self, container):
+        frame = container["frame"]
+
+        def start_drag(event):
+            frame._drag_data = {"x": event.x, "y": event.y}
+
+        def do_drag(event):
+            dx = event.x - frame._drag_data["x"]
+            dy = event.y - frame._drag_data["y"]
+            self.seq_area.move(container["id"], dx, dy)
+
+        frame.bind("<Button-1>", start_drag)
+        frame.bind("<B1-Motion>", do_drag)
+
+    # ---------- BLOQUES ----------
     def _place_block(self, action, x, y):
         for c in self.containers:
             bbox = self.seq_area.bbox(c["id"])
@@ -215,24 +231,22 @@ class DragDropApp(ctk.CTk):
         lbl.image = self.icons[action]
         lbl.pack(side="left", padx=3)
 
-        # --- PARAMETROS ---
-        param_var = tk.StringVar()
+        entry = None
         if action in ["Adelante", "Reversa", "Esperar"]:
             entry = ctk.CTkEntry(blk, width=40, placeholder_text="s")
             entry.pack(side="left", padx=2)
-            param_var.set(entry)
         elif action in ["Izquierda", "Derecha"]:
             entry = ctk.CTkEntry(blk, width=40, placeholder_text="°")
             entry.pack(side="left", padx=2)
-            param_var.set(entry)
 
         del_btn = ctk.CTkButton(blk, text="✖", width=20, fg_color="#c62828",
                                 hover_color="#a71d2a", command=lambda b=blk: self._delete_block(container, b))
         del_btn.pack(side="right", padx=2)
 
-        container["blocks"].append({"type": action, "frame": blk, "param": param_var})
+        container["blocks"].append({"type": action, "frame": blk, "param": entry})
         self._clear_inner_line()
 
+    # ---------- ELIMINAR Y LIMPIAR ----------
     def _delete_free_block(self, block):
         self.seq_area.delete(self.seq_area.find_withtag("current"))
         if block in self.blocks:
@@ -255,21 +269,59 @@ class DragDropApp(ctk.CTk):
     def _run_container(self, inner_container):
         for c in self.containers:
             if c["inner"] == inner_container:
-                for i, blk in enumerate(c["blocks"]):
-                    action = blk["type"]
-                    param_widget = blk["param"].get() if hasattr(blk["param"], "get") else None
-                    param_value = None
-                    if param_widget:
-                        try:
-                            param_value = float(param_widget.get())
-                        except:
-                            param_value = None
-                    # mostrar bloque actual
-                    self.status_label.configure(text=f"Ejecutando: {action} ({param_value if param_value else ''})", text_color="blue")
-                    # simular la acción
-                    time.sleep(param_value if param_value else 1)
-                self.status_label.configure(text="Listo", text_color="gray")
+                self._execute_blocks(c["blocks"], 0)
                 break
+
+    def _execute_blocks(self, blocks, index):
+        if index >= len(blocks):
+            self.status_label.configure(text="Listo ✅", text_color="gray")
+            if self.bt_connected:
+                self.serial_port.write(b"S\n")
+            return
+
+        blk = blocks[index]
+        action = blk["type"]
+        entry = blk.get("param")
+        param_value = 1
+        if entry:
+            try:
+                param_value = float(entry.get())
+            except:
+                param_value = 1
+
+        # Resaltar bloque actual
+        highlight = tk.Frame(blk["frame"], bg="#ff6d00", highlightthickness=3)
+        highlight.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        display_text = f"{action}"
+        if action in ["Esperar", "Adelante", "Reversa"]:
+            display_text += f" - {param_value}s"
+        elif action in ["Izquierda", "Derecha"]:
+            display_text += f" - {param_value}°"
+
+        self.status_label.configure(text=f"Ejecutando: {display_text}", text_color="blue")
+
+        # Enviar comando al Arduino
+        if self.bt_connected:
+            cmd = {"Adelante": "F", "Reversa": "B", "Izquierda": "L", "Derecha": "R", "Detener": "S"}.get(action, "S")
+            self.serial_port.write(cmd.encode())
+
+
+        # Tiempo de espera real
+        if action == "Esperar":
+            delay = int(param_value * 1000)
+        elif action in ["Adelante", "Reversa"]:
+            delay = int(param_value * 1000)
+        elif action in ["Izquierda", "Derecha"]:
+            delay = int((param_value / 90) * 1000)  # aprox. 1s por 90°
+        else:
+            delay = 800
+
+        self.after(delay, lambda: self._finish_block(highlight, blocks, index))
+
+    def _finish_block(self, highlight, blocks, index):
+        highlight.destroy()
+        self._execute_blocks(blocks, index + 1)
 
     # ---------- BLUETOOTH ----------
     def _build_bt_panel(self):
@@ -305,10 +357,9 @@ class DragDropApp(ctk.CTk):
         for p in ports:
             fr = ctk.CTkFrame(self.frame_ports, fg_color="#caf0f8", corner_radius=6)
             fr.pack(fill="x", padx=4, pady=3)
-            sel_btn = ctk.CTkRadioButton(fr, text=f"{p.description} ({p.device})", value=p.device,
-                                         variable=tk.StringVar(value=""),
-                                         command=lambda port=p.device: self._select_port(port))
-            sel_btn.pack(anchor="w", padx=5, pady=3)
+            btn = ctk.CTkButton(fr, text=f"{p.description} ({p.device})", fg_color="#00b4d8",
+                                hover_color="#0096c7", command=lambda port=p.device: self._select_port(port))
+            btn.pack(fill="x", padx=5, pady=3)
 
     def _select_port(self, port):
         self.selected_port = port
@@ -336,7 +387,7 @@ class DragDropApp(ctk.CTk):
         self.btn_disconnect.configure(state="disabled")
         self.bt_connected = False
 
-    # ---------- LIMPIAR TODO ----------
+    # ---------- LIMPIAR ----------
     def clear_all(self):
         for c in self.containers:
             self.seq_area.delete(c["id"])
