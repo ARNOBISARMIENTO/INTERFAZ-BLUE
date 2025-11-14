@@ -1,4 +1,4 @@
-import customtkinter as ctk
+import customtkinter as ctk 
 from PIL import Image, ImageTk
 import os, serial, serial.tools.list_ports, tkinter as tk
 
@@ -306,22 +306,26 @@ class DragDropApp(ctk.CTk):
             cmd = {"Adelante": "F", "Reversa": "B", "Izquierda": "L", "Derecha": "R", "Detener": "S"}.get(action, "S")
             self.serial_port.write(cmd.encode())
 
-
-        # Tiempo de espera real
+        # ---- FLUIDEZ MEJORADA ----
         if action == "Esperar":
             delay = int(param_value * 1000)
         elif action in ["Adelante", "Reversa"]:
             delay = int(param_value * 1000)
         elif action in ["Izquierda", "Derecha"]:
-            delay = int((param_value / 90) * 1000)  # aprox. 1s por 90°
+            delay = int((param_value / 90) * 1000)
         else:
-            delay = 800
+            delay = 700
 
+        # pasa al siguiente bloque sin interrupciones
         self.after(delay, lambda: self._finish_block(highlight, blocks, index))
 
     def _finish_block(self, highlight, blocks, index):
         highlight.destroy()
-        self._execute_blocks(blocks, index + 1)
+        # detener movimiento antes de siguiente acción
+        if self.bt_connected:
+            self.serial_port.write(b"S")
+        # ejecutar el siguiente bloque con transición fluida
+        self.after(200, lambda: self._execute_blocks(blocks, index + 1))
 
     # ---------- BLUETOOTH ----------
     def _build_bt_panel(self):
